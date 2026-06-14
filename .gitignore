@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+.venv/
+venv/
+env/
+
+# Node.js / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# Tests
+.pytest_cache/
+tests/results/
+test.db
+.coverage
+htmlcov/
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
+*.env
+.env.*
+!.env.example
+
+# Mosquitto data (volumes Docker)
+mosquitto/data/
+mosquitto/log/
+
+# PostgreSQL data (volumes Docker)
+pgdata*/

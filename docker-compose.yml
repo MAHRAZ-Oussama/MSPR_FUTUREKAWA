@@ -1,0 +1,311 @@
+x-backend-pays: &backend-pays
+  build:
+    context: ./backend-pays
+  restart: unless-stopped
+  depends_on:
+    postgres-br:
+      condition: service_healthy
+  environment:
+    DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-${COUNTRY:-br}:5432/futurekawa
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+    start_period: 20s
+
+x-subscriber: &subscriber
+  build:
+    context: ./subscriber
+  restart: unless-stopped
+
+x-simulator: &simulator
+  build:
+    context: ./simulator
+  restart: unless-stopped
+
+x-postgres: &postgres
+  image: postgres:16-alpine
+  restart: unless-stopped
+  environment:
+    POSTGRES_USER: futurekawa
+    POSTGRES_PASSWORD: futurekawa
+    POSTGRES_DB: futurekawa
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U futurekawa"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+# ──────────────────────────────────────────────────────────────────────────────
+services:
+
+  # ── Bases de données ────────────────────────────────────────────────────────
+  postgres-br:
+    <<: *postgres
+    container_name: postgres-br
+    volumes:
+      - pgdata-br:/var/lib/postgresql/data
+    networks: [br-net]
+
+  postgres-ec:
+    <<: *postgres
+    container_name: postgres-ec
+    volumes:
+      - pgdata-ec:/var/lib/postgresql/data
+    networks: [ec-net]
+
+  postgres-co:
+    <<: *postgres
+    container_name: postgres-co
+    volumes:
+      - pgdata-co:/var/lib/postgresql/data
+    networks: [co-net]
+
+  # ── Brokers MQTT ─────────────────────────────────────────────────────────────
+  mosquitto-br:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto-br
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqdata-br:/mosquitto/data
+    networks: [br-net]
+    restart: unless-stopped
+
+  mosquitto-ec:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto-ec
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqdata-ec:/mosquitto/data
+    networks: [ec-net]
+    restart: unless-stopped
+
+  mosquitto-co:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto-co
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqdata-co:/mosquitto/data
+    networks: [co-net]
+    restart: unless-stopped
+
+  # ── Serveur SMTP de développement ────────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog
+    ports:
+      - "8025:8025"   # Interface web MailHog
+      - "1025:1025"   # SMTP
+    networks: [br-net, ec-net, co-net]
+    restart: unless-stopped
+
+  # ── APIs pays ────────────────────────────────────────────────────────────────
+  api-br:
+    build:
+      context: ./backend-pays
+    container_name: api-br
+    environment:
+      COUNTRY: BR
+      DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-br:5432/futurekawa
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres-br:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [br-net, central-net]
+    restart: unless-stopped
+
+  api-ec:
+    build:
+      context: ./backend-pays
+    container_name: api-ec
+    environment:
+      COUNTRY: EC
+      DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-ec:5432/futurekawa
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres-ec:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [ec-net, central-net]
+    restart: unless-stopped
+
+  api-co:
+    build:
+      context: ./backend-pays
+    container_name: api-co
+    environment:
+      COUNTRY: CO
+      DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-co:5432/futurekawa
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres-co:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [co-net, central-net]
+    restart: unless-stopped
+
+  # ── Subscribers MQTT ─────────────────────────────────────────────────────────
+  subscriber-br:
+    build:
+      context: ./subscriber
+    container_name: subscriber-br
+    environment:
+      COUNTRY: BR
+      MQTT_HOST: mosquitto-br
+      DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-br:5432/futurekawa
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    depends_on:
+      - mosquitto-br
+      - postgres-br
+      - api-br
+    networks: [br-net]
+    restart: unless-stopped
+
+  subscriber-ec:
+    build:
+      context: ./subscriber
+    container_name: subscriber-ec
+    environment:
+      COUNTRY: EC
+      MQTT_HOST: mosquitto-ec
+      DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-ec:5432/futurekawa
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    depends_on:
+      - mosquitto-ec
+      - postgres-ec
+      - api-ec
+    networks: [ec-net]
+    restart: unless-stopped
+
+  subscriber-co:
+    build:
+      context: ./subscriber
+    container_name: subscriber-co
+    environment:
+      COUNTRY: CO
+      MQTT_HOST: mosquitto-co
+      DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-co:5432/futurekawa
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    depends_on:
+      - mosquitto-co
+      - postgres-co
+      - api-co
+    networks: [co-net]
+    restart: unless-stopped
+
+  # ── Simulateurs IoT ──────────────────────────────────────────────────────────
+  simulator-br:
+    build:
+      context: ./simulator
+    container_name: simulator-br
+    environment:
+      COUNTRY: BR
+      MQTT_HOST: mosquitto-br
+      INTERVAL_S: "30"
+    depends_on:
+      - mosquitto-br
+    networks: [br-net]
+    restart: unless-stopped
+
+  simulator-ec:
+    build:
+      context: ./simulator
+    container_name: simulator-ec
+    environment:
+      COUNTRY: EC
+      MQTT_HOST: mosquitto-ec
+      INTERVAL_S: "30"
+    depends_on:
+      - mosquitto-ec
+    networks: [ec-net]
+    restart: unless-stopped
+
+  simulator-co:
+    build:
+      context: ./simulator
+    container_name: simulator-co
+    environment:
+      COUNTRY: CO
+      MQTT_HOST: mosquitto-co
+      INTERVAL_S: "30"
+    depends_on:
+      - mosquitto-co
+    networks: [co-net]
+    restart: unless-stopped
+
+  # ── Backend central (siège) ──────────────────────────────────────────────────
+  backend-central:
+    build:
+      context: ./backend-central
+    container_name: backend-central
+    environment:
+      URL_BR: http://api-br:8000
+      URL_EC: http://api-ec:8000
+      URL_CO: http://api-co:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      api-br:
+        condition: service_healthy
+      api-ec:
+        condition: service_healthy
+      api-co:
+        condition: service_healthy
+    networks: [central-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+    container_name: frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend-central
+    networks: [central-net]
+    restart: unless-stopped
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  pgdata-br:
+  pgdata-ec:
+  pgdata-co:
+  mqdata-br:
+  mqdata-ec:
+  mqdata-co:
+
+# ── Réseaux isolés par pays ──────────────────────────────────────────────────
+networks:
+  br-net:
+  ec-net:
+  co-net:
+  central-net:

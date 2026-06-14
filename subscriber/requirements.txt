@@ -1,0 +1,5 @@
+aiomqtt==1.2.1
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.29
+aiosmtplib==3.0.1
+python-dotenv==1.0.1
