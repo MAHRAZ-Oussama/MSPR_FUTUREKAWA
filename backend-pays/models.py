@@ -1,9 +1,10 @@
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import String, Integer, ForeignKey, Date, DECIMAL, Text, Boolean
+from sqlalchemy import String, Integer, ForeignKey, Date, DECIMAL, Text, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ
 from database import Base
+
+_TZ = DateTime(timezone=True)
 
 
 class Warehouse(Base):
@@ -42,7 +43,7 @@ class Measurement(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     warehouse_id: Mapped[int] = mapped_column(Integer, ForeignKey("warehouses.id"))
-    measured_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=datetime.utcnow)
+    measured_at: Mapped[datetime] = mapped_column(_TZ, default=datetime.utcnow)
     temperature_c: Mapped[Decimal | None] = mapped_column(DECIMAL(4, 1))
     humidity_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(4, 1))
 
@@ -58,8 +59,8 @@ class Alert(Base):
     alert_type: Mapped[str] = mapped_column(String(30), nullable=False)
     severity: Mapped[str] = mapped_column(String(10), nullable=False)
     message: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=datetime.utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    created_at: Mapped[datetime] = mapped_column(_TZ, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(_TZ)
     email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
 
     warehouse: Mapped["Warehouse"] = relationship("Warehouse", back_populates="alerts")

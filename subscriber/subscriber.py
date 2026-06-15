@@ -14,8 +14,9 @@ import aiosmtplib
 from email.mime.text import MIMEText
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, Text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ
+from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, Text, DateTime
+
+TIMESTAMPTZ = DateTime(timezone=True)
 from sqlalchemy.orm import DeclarativeBase
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
