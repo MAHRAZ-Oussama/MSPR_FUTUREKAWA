@@ -203,16 +203,17 @@ async def main():
                 reconnect_delay = 5
                 await client.subscribe(TOPIC, qos=1)
                 log.info("Abonné au topic %s", TOPIC)
-                async for message in client.messages:
-                    try:
-                        topic_parts = str(message.topic).split("/")
-                        # futurekawa/{COUNTRY}/warehouse/{CODE}/measurement
-                        if len(topic_parts) >= 4:
-                            warehouse_code = topic_parts[3]
-                            data = json.loads(message.payload)
-                            await process_measurement(warehouse_code, data)
-                    except Exception as exc:
-                        log.error("Erreur traitement message : %s", exc)
+                async with client.messages() as messages:
+                    async for message in messages:
+                        try:
+                            topic_parts = str(message.topic).split("/")
+                            # futurekawa/{COUNTRY}/warehouse/{CODE}/measurement
+                            if len(topic_parts) >= 4:
+                                warehouse_code = topic_parts[3]
+                                data = json.loads(message.payload)
+                                await process_measurement(warehouse_code, data)
+                        except Exception as exc:
+                            log.error("Erreur traitement message : %s", exc)
         except aiomqtt.MqttError as exc:
             log.error("MQTT déconnecté : %s — reconnexion dans %ds", exc, reconnect_delay)
             await asyncio.sleep(reconnect_delay)
