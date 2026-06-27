@@ -1,14 +1,7 @@
 export default function Spinner() {
   return (
-    <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
-      <div style={{
-        width: 40, height: 40,
-        border: "4px solid #ddd",
-        borderTopColor: "#1a3a2a",
-        borderRadius: "50%",
-        animation: "spin 0.8s linear infinite",
-      }} />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    <div className="flex justify-center items-center py-16">
+      <div className="w-8 h-8 border-[3px] border-coffee-espresso border-t-coffee-crema rounded-full animate-spin" />
     </div>
   );
 }
