@@ -34,7 +34,7 @@ pipeline {
             }
         }
 
-        stage('Tests unitaires') {
+        stage('Tests unitaires + app (isolés)') {
             steps {
                 sh '''
                     docker run --rm \
@@ -43,16 +43,19 @@ pipeline {
                         -v $(pwd)/subscriber:/subscriber \
                         python:3.12-slim \
                         bash -c "
-                            pip install -q pytest pytest-asyncio aiosmtplib sqlalchemy asyncpg aiosqlite &&
-                            pip install -q aiomqtt &&
+                            pip install -q pytest pytest-asyncio httpx fastapi 'sqlalchemy[asyncio]' \
+                                aiosqlite pydantic-settings aiosmtplib apscheduler aiomqtt &&
                             cd /tests &&
-                            python -m pytest test_unit_severity.py -v --tb=short
+                            python -m pytest test_unit_severity.py test_app_backend_pays.py \
+                                test_alerting_logic.py test_subscriber_logic.py \
+                                -v --tb=short --junit-xml=/tests/results/unit.xml
                         "
                 '''
             }
             post {
                 always {
-                    echo 'Tests unitaires terminés'
+                    junit allowEmptyResults: true, testResults: 'tests/results/*.xml'
+                    echo 'Tests unitaires + app terminés'
                 }
             }
         }

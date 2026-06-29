@@ -43,6 +43,11 @@ ESP32 (WROOM-32)          DHT22
 
 ## 3. Code MicroPython (ESP32 réel)
 
+> Le firmware est livré comme fichier **flashable autonome** dans
+> [`iot/main.py`](../iot/main.py) (config dans `iot/config.example.py`,
+> procédure de flash dans `iot/README.md`). L'extrait ci-dessous en présente
+> la logique principale.
+
 ```python
 # main.py — ESP32 + DHT22 + MQTT (MicroPython)
 import dht

@@ -5,6 +5,7 @@ from sqlalchemy import select, update
 from database import get_db
 from models import Alert
 from schemas import AlertOut
+from security import require_api_key
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -28,7 +29,11 @@ async def list_alerts(
 
 
 @router.post("/{alert_id}/resolve", response_model=AlertOut)
-async def resolve_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
+async def resolve_alert(
+    alert_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(require_api_key),
+):
     await db.execute(
         update(Alert)
         .where(Alert.id == alert_id)

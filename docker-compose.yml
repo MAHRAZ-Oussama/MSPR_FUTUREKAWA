@@ -108,6 +108,8 @@ services:
     environment:
       COUNTRY: BR
       DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-br:5432/futurekawa
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
     ports:
       - "8001:8000"
     depends_on:
@@ -129,6 +131,8 @@ services:
     environment:
       COUNTRY: EC
       DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-ec:5432/futurekawa
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
     ports:
       - "8002:8000"
     depends_on:
@@ -150,6 +154,8 @@ services:
     environment:
       COUNTRY: CO
       DATABASE_URL: postgresql+asyncpg://futurekawa:futurekawa@postgres-co:5432/futurekawa
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
     ports:
       - "8003:8000"
     depends_on:

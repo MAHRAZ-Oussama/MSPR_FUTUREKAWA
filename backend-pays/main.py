@@ -1,26 +1,46 @@
-import os
-import asyncio
+import logging
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update as sa_update
+from sqlalchemy import select, func
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from database import get_db
+from config import settings
+from database import get_db, AsyncSessionLocal
 from models import Lot, Alert, Warehouse
 from schemas import DashboardStats, WarehouseOut
 from routers import warehouses, lots, measurements, alerts
 from seed import seed
+from alerting import mark_expired_lots, sync_lot_alert_status, run_periodic_checks
 
-COUNTRY = os.getenv("COUNTRY", "BR")
+log = logging.getLogger("api")
+COUNTRY = settings.country
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await seed()
-    yield
+    # Vérification immédiate au démarrage, puis périodique (O3).
+    await run_periodic_checks(AsyncSessionLocal)
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        run_periodic_checks,
+        "interval",
+        minutes=settings.check_interval_minutes,
+        args=[AsyncSessionLocal],
+        id="periodic_checks",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.start()
+    log.info("Scheduler démarré — vérifications toutes les %d min",
+             settings.check_interval_minutes)
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -31,7 +51,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,13 +69,8 @@ async def health():
 
 @app.get("/dashboard/summary", response_model=DashboardStats)
 async def dashboard_summary(db: AsyncSession = Depends(get_db)):
-    cutoff = date.today() - timedelta(days=365)
-    await db.execute(
-        sa_update(Lot)
-        .where(Lot.storage_date <= cutoff, Lot.status != "EN_ALERTE")
-        .values(status="PERIME")
-    )
-    await db.commit()
+    await mark_expired_lots(db)
+    await sync_lot_alert_status(db)
 
     total = (await db.execute(func.count(Lot.id).select())).scalar() or 0
     conformes = (await db.execute(

@@ -6,15 +6,16 @@
 
 | Niveau | Outil | Périmètre | Automatisé |
 |--------|-------|-----------|-----------|
-| Unitaires | pytest | Logique métier : calcul sévérité, déduplication, FIFO | ✅ CI Jenkins |
-| Intégration | pytest + testcontainers | API + BDD PostgreSQL réelle | ✅ CI Jenkins |
-| API / End-to-end | pytest + httpx | Routes API pays et central | ✅ CI Jenkins |
+| Unitaires | pytest | Logique pure : sévérité, hystérésis, bornes physiques | ✅ CI Jenkins (sans Docker) |
+| Application isolée | pytest + httpx ASGITransport + SQLite | Routes API pays, péremption, statut, clé API | ✅ CI Jenkins (sans Docker) |
+| Intégration | pytest + httpx | API pays & centrale sur stack Docker réelle | ✅ CI Jenkins (stack live) |
+| End-to-end | pytest + paho-mqtt | Cycle IoT complet MQTT → BDD → alerte | ✅ CI Jenkins (stack live) |
 | UI | Manuel (scénario) | Interface Web (navigateur) | ❌ Manuel |
 
 ### Données de test
-- Base de test PostgreSQL éphémère (Docker via `testcontainers`)
-- Données seed déterministes (fixtures pytest)
-- MailHog pour capturer les emails SMTP
+- Tests isolés : SQLite **en mémoire** (`StaticPool`), aucune dépendance externe
+- Tests intégration/e2e : stack Docker (`docker compose up`)
+- Données seed déterministes (fixtures pytest) ; MailHog pour capturer les emails SMTP
 
 ---
 
@@ -31,14 +32,42 @@
 | UT-05 | deviation=4.5, tolerance=3.0 | `WARNING` | exactement 1.5× = WARNING |
 | UT-06 | deviation=4.6, tolerance=3.0 | `CRITICAL` | dépasse 1.5× = CRITICAL |
 
+### 2.1bis Plage physique & hystérésis (subscriber)
+
+| ID | Entrée | Résultat attendu | Critère |
+|----|--------|-----------------|---------|
+| UT-07 | `is_plausible(29, 55)` | `True` | mesure réaliste acceptée |
+| UT-08 | `is_plausible(250, 55)` / `(29, 120)` | `False` | hors bornes physiques → rejetée |
+| UT-09 | `is_plausible(None, 55)` | `False` | valeur manquante rejetée |
+| UT-10 | `should_clear(2.0, 3.0)` | `True` | retour franc (≤0,8×tol) → auto-résolution |
+| UT-11 | `should_clear(2.5, 3.0)` | `False` | bande morte → on maintient l'alerte |
+
 ### 2.2 Logique FIFO (lots)
 
 | ID | Scénario | Résultat attendu |
 |----|----------|-----------------|
-| UT-10 | 3 lots avec dates 2024-01, 2023-06, 2024-06 | Ordre : 2023-06, 2024-01, 2024-06 |
-| UT-11 | Lot stocké il y a 366 jours | Statut = PERIME |
-| UT-12 | Lot stocké il y a 364 jours | Statut = CONFORME |
-| UT-13 | Lot stocké il y a 365 jours | Statut = PERIME |
+| UT-20 | 3 lots avec dates 2024-01, 2023-06, 2024-06 | Ordre : 2023-06, 2024-01, 2024-06 |
+| UT-21 | Lot stocké il y a 366 jours | Statut = PERIME |
+| UT-22 | Lot stocké il y a 364 jours | Statut = CONFORME |
+
+### 2.3 Tests d'application & d'alerting ISOLÉS (SQLite, sans Docker)
+
+Exécutés en CI sans stack live, via `httpx ASGITransport` + SQLite mémoire.
+
+| ID | Fichier | Scénario | Résultat attendu |
+|----|---------|----------|-----------------|
+| AP-01 | `test_app_backend_pays` | `GET /lots/` | tri FIFO, statut PERIME auto |
+| AP-02 | `test_app_backend_pays` | `POST /lots/` sans `API_KEY` défini | 201 (ouvert) |
+| AP-03 | `test_app_backend_pays` | `POST /lots/` avec `API_KEY` défini, sans clé | 401 |
+| AP-04 | `test_app_backend_pays` | `POST /lots/` avec bonne clé | 201 |
+| AL-01 | `test_alerting_logic` | lot > 365 j → `check_expired_lots` | 1 alerte `LOT_EXPIRED`, statut PERIME |
+| AL-02 | `test_alerting_logic` | 2e passage | aucune alerte en double |
+| AL-03 | `test_alerting_logic` | `notify=True` | email envoyé au responsable, `email_sent=True` |
+| AL-04 | `test_alerting_logic` | alerte conditions active | lots de l'entrepôt → `EN_ALERTE` |
+| AL-05 | `test_alerting_logic` | plus d'alerte active | `EN_ALERTE` → `CONFORME` ; `PERIME` conservé |
+| SB-01 | `test_subscriber_logic` | mesure aberrante (T=250) | ni persistée ni alertée (A3) |
+| SB-02 | `test_subscriber_logic` | CRITICAL puis retour franc | alerte créée puis auto-résolue (A1) |
+| SB-03 | `test_subscriber_logic` | retour en bande morte | alerte maintenue active |
 
 ---
 

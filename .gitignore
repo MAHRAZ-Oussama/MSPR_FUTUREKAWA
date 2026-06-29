@@ -41,6 +41,7 @@ htmlcov/
 *.env
 .env.*
 !.env.example
+iot/config.py        # config capteur locale (mot de passe Wi-Fi)
 
 # Mosquitto data (volumes Docker)
 mosquitto/data/

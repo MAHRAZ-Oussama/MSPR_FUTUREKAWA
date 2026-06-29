@@ -102,13 +102,20 @@ MSPR FutureKawa/
 │
 ├── backend-pays/                   # API FastAPI partagée (BR, EC, CO)
 │   ├── Dockerfile
+│   ├── entrypoint.sh               # alembic upgrade head → uvicorn
 │   ├── requirements.txt
-│   ├── main.py                     # Application FastAPI + seed + dashboard
+│   ├── config.py                   # Configuration typée (pydantic-settings)
+│   ├── main.py                     # FastAPI + seed + dashboard + scheduler
 │   ├── database.py                 # Connexion SQLAlchemy async
 │   ├── models.py                   # ORM : Warehouse, Lot, Measurement, Alert
 │   ├── schemas.py                  # Pydantic schemas I/O
 │   ├── seed.py                     # Données initiales par pays
-│   ├── init-db/init.sql            # Schéma SQL + index
+│   ├── alerting.py                 # Péremption + statut lots + email (O1/O2/O3)
+│   ├── security.py                 # Clé API optionnelle (écritures)
+│   ├── alembic.ini                 # Config migrations
+│   ├── migrations/                 # Migrations Alembic versionnées
+│   │   ├── env.py
+│   │   └── versions/0001_initial_schema.py
 │   └── routers/
 │       ├── warehouses.py           # GET /warehouses/
 │       ├── lots.py                 # GET/POST /lots/ + FIFO + expiry
@@ -118,7 +125,13 @@ MSPR FutureKawa/
 ├── subscriber/                     # Consumer MQTT → PostgreSQL
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── severity.py                 # Logique pure : sévérité, hystérésis, bornes
 │   └── subscriber.py               # aiomqtt + alerting + anti-flood + email
+│
+├── iot/                            # Firmware capteur réel (MicroPython)
+│   ├── main.py                     # ESP32 + DHT22 → MQTT (buffer, reconnexion)
+│   ├── config.example.py           # Modèle de config (Wi-Fi, broker, entrepôt)
+│   └── README.md                   # Câblage, flash, démo
 │
 ├── simulator/                      # Capteurs IoT virtuels (DHT22)
 │   ├── Dockerfile
@@ -157,10 +170,13 @@ MSPR FutureKawa/
 │   ├── pytest.ini
 │   ├── conftest.py
 │   ├── requirements-test.txt
-│   ├── test_unit_severity.py       # UT-01 à UT-06 : calcul sévérité
-│   ├── test_api_lots.py            # IT-01 à IT-30 : API pays
-│   ├── test_api_central.py         # IT-40 à IT-44 : API centrale
-│   └── test_e2e_iot.py             # E2E-01, E2E-02 : cycle IoT complet
+│   ├── test_unit_severity.py       # UT : sévérité, hystérésis, bornes physiques
+│   ├── test_app_backend_pays.py    # App FastAPI isolée (SQLite) + clé API
+│   ├── test_alerting_logic.py      # O1/O2 : péremption, email, statut EN_ALERTE
+│   ├── test_subscriber_logic.py    # A1/A3 : auto-résolution, rejet aberrant
+│   ├── test_api_lots.py            # IT : API pays (stack live)
+│   ├── test_api_central.py         # IT : API centrale (stack live)
+│   └── test_e2e_iot.py             # E2E : cycle IoT complet (stack live)
 │
 ├── architecture/
 │   ├── architecture.md             # Architecture globale + flux
@@ -182,7 +198,14 @@ MSPR FutureKawa/
 
 ## 4. Base de données — Modèle de données
 
-### Schéma SQL (`backend-pays/init-db/init.sql`)
+### Schéma SQL (migrations Alembic — `backend-pays/migrations/`)
+
+Le schéma est géré par des **migrations versionnées Alembic** (équivalent Python
+de Flyway). Au démarrage de chaque API pays, `entrypoint.sh` exécute
+`alembic upgrade head` avant de lancer uvicorn ; le `seed()` du lifespan recrée
+le schéma via `create_all` en filet de sécurité si les migrations échouent.
+La migration initiale `migrations/versions/0001_initial_schema.py` produit le
+schéma suivant :
 
 ```sql
 -- Entrepôts
@@ -367,6 +390,53 @@ async def is_duplicate(db, warehouse_id, alert_type) -> bool:
 
 **Effet** : maximum **1 email** par type d'alerte par entrepôt toutes les 30 minutes.
 La déduplication est en base (pas en mémoire) pour survivre aux redémarrages.
+
+### Auto-résolution par hystérésis (subscriber)
+
+Quand une mesure revient **franchement** dans la plage (déviation ≤ 0,8 × tolérance),
+les alertes conditions actives de ce type sont automatiquement clôturées
+(`resolved_at` renseigné). La bande morte entre 0,8 × tolérance et la tolérance
+évite le « flapping » (alerte créée/résolue en boucle autour du seuil).
+
+```python
+should_clear(deviation, tolerance)  # True si deviation ≤ 0.8 * tolerance
+→ resolve_active_alerts(warehouse_id, alert_type)
+```
+
+### Validation de plage physique (rejet capteur défaillant)
+
+Avant toute persistance, `is_plausible(temp, hum)` rejette les lectures hors
+bornes physiques (T ∈ [-10, 60] °C, H ∈ [0, 100] %) : une valeur aberrante d'un
+DHT22 défaillant n'est ni stockée ni alertée.
+
+### Dispositif d'alerte — synthèse (règles, seuils, fréquence, emails)
+
+| Type d'alerte | Déclencheur | Sévérité | Email | Vérification |
+|---------------|-------------|----------|-------|--------------|
+| `TEMP_OUT_OF_RANGE` | \|T − cible\| > tolérance T (±3 °C) | WARNING (≤1,5×) / CRITICAL (>1,5×) | responsable entrepôt | à chaque mesure (~30 s) |
+| `HUMIDITY_OUT_OF_RANGE` | \|H − cible\| > tolérance H (±2 %) | WARNING / CRITICAL | responsable entrepôt | à chaque mesure (~30 s) |
+| `LOT_EXPIRED` | lot stocké > 365 jours | WARNING | responsable entrepôt | tâche planifiée (5 min) + au démarrage + à la lecture des lots |
+
+- **Anti-flood** : 1 email max / type / entrepôt / 30 min ; `LOT_EXPIRED` n'est
+  émis qu'une fois par lot (déduplication sur l'historique des alertes).
+- **Statut des lots** : un lot dont l'entrepôt a une alerte conditions active
+  passe `EN_ALERTE` ; il redevient `CONFORME` à la résolution ; `PERIME` est
+  prioritaire (cf. `alerting.sync_lot_alert_status`).
+- **Contenu email** (exemple `LOT_EXPIRED`) :
+
+```
+Sujet : [FutureKawa] Lot périmé — BR-LOT-2024-003 (BR)
+Pays : BR
+Entrepôt : BR-WH-001
+Lot : BR-LOT-2024-003
+Lot BR-LOT-2024-003 périmé : stocké depuis 402 jours (> 365 j). Expédition à proscrire.
+Action attendue : retirer le lot de la rotation FIFO et le déclasser.
+Horodatage : 2026-06-28T10:15:00+00:00
+```
+
+> La péremption et l'envoi des emails `LOT_EXPIRED` sont portés par le
+> **backend-pays** (`alerting.py`) via un scheduler APScheduler (toutes les
+> `CHECK_INTERVAL_MINUTES`, défaut 5 min), pas par le subscriber.
 
 ### Reconnexion MQTT (backoff exponentiel)
 
