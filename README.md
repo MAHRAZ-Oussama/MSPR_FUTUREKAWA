@@ -92,20 +92,30 @@ Le backend central agrège les données via `central-net`.
 - **Mode dégradé** : si un backend pays est indisponible, les autres restent accessibles
 - **Lots FIFO** : tri par date de stockage croissante, statuts CONFORME / EN_ALERTE / PÉRIMÉ
 - **Courbes temps réel** : température et humidité par lot (Chart.js)
-- **Alertes intelligentes** : déduplication anti-flood (1 email / 30 min / entrepôt / type)
+- **Alertes intelligentes** :
+  - conditions hors plage (T°/H) → email au responsable, déduplication anti-flood (1 / 30 min / entrepôt / type)
+  - **lot > 365 jours → alerte `LOT_EXPIRED` + email** au responsable du pays
+  - **auto-résolution par hystérésis** quand les conditions reviennent à la normale
+  - statut `EN_ALERTE` appliqué aux lots d'un entrepôt en alerte conditions
+  - **vérification périodique** (scheduler APScheduler, défaut 5 min) + au démarrage
 - **Simulateur IoT** : drift sinusoïdal + bruit gaussien pour déclencher des alertes réalistes
+- **Firmware réel** : `iot/` (MicroPython ESP32 + DHT22), même contrat MQTT que le simulateur
+- **Migrations Alembic** : schéma versionné, appliqué au démarrage de chaque API
+- **Sécurité** : clé API optionnelle sur les écritures, CORS paramétrable (voir `architecture/securite.md`)
 
 ---
 
 ## Structure du projet
 
 ```
-├── backend-pays/      # FastAPI partagé (BR, EC, CO via variable COUNTRY)
-├── subscriber/        # Consumer MQTT → PostgreSQL + alerting email
+├── backend-pays/      # FastAPI partagé (BR, EC, CO) + alerting + migrations Alembic
+├── subscriber/        # Consumer MQTT → PostgreSQL + alerting email (severity.py)
 ├── simulator/         # Simulateur capteurs DHT22 (ESP32 virtuel)
+├── iot/               # Firmware réel MicroPython (ESP32 + DHT22)
 ├── backend-central/   # Agrégateur siège — appels parallèles asyncio
 ├── frontend/          # React + Vite + Chart.js
 ├── mosquitto/         # Config broker Eclipse Mosquitto 2.x
+├── tests/             # Unitaires + app isolés (SQLite) + intégration + e2e
 └── docker-compose.yml # Orchestration des 18 services
 ```
 

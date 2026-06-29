@@ -1,13 +1,13 @@
 """Seed initial data per country — called once at startup."""
-import os
 import asyncio
 from datetime import date, timedelta
 import random
-from sqlalchemy import select, text
+from sqlalchemy import select
 from database import engine, AsyncSessionLocal
 from models import Base, Warehouse, Lot
+from config import settings
 
-COUNTRY = os.getenv("COUNTRY", "BR")
+COUNTRY = settings.country
 
 COUNTRY_CONFIG = {
     "BR": {

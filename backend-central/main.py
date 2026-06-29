@@ -12,9 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="FutureKawa — Backend Central", version="1.0.0")
 
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+# Clé API optionnelle propagée aux backends pays sur les écritures (si activée).
+API_KEY = os.getenv("API_KEY") or None
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -26,6 +30,11 @@ COUNTRY_URLS: dict[str, str] = {
 }
 
 TIMEOUT = httpx.Timeout(10.0)
+
+
+def _write_headers() -> dict[str, str]:
+    """En-têtes à propager aux backends pays pour les requêtes d'écriture."""
+    return {"X-API-Key": API_KEY} if API_KEY else {}
 
 
 async def fetch(client: httpx.AsyncClient, country: str, path: str) -> tuple[str, Any, bool]:
@@ -185,7 +194,9 @@ async def resolve_alert(country: str, alert_id: int):
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(
-                COUNTRY_URLS[country] + f"/alerts/{alert_id}/resolve", timeout=TIMEOUT
+                COUNTRY_URLS[country] + f"/alerts/{alert_id}/resolve",
+                headers=_write_headers(),
+                timeout=TIMEOUT,
             )
             resp.raise_for_status()
             return resp.json()

@@ -1,14 +1,13 @@
-from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
 from database import get_db
-from models import Lot, Warehouse
+from models import Lot
 from schemas import LotOut, LotCreate
+from alerting import mark_expired_lots, sync_lot_alert_status
+from security import require_api_key
 
 router = APIRouter(prefix="/lots", tags=["lots"])
-
-EXPIRY_DAYS = 365
 
 
 @router.get("/", response_model=list[LotOut])
@@ -17,7 +16,8 @@ async def list_lots(
     warehouse_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    await _update_expired_lots(db)
+    await mark_expired_lots(db)
+    await sync_lot_alert_status(db)
     stmt = select(Lot).order_by(Lot.storage_date.asc())
     if status:
         stmt = stmt.where(Lot.status == status)
@@ -38,19 +38,13 @@ async def get_lot(lot_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/", response_model=LotOut, status_code=201)
-async def create_lot(payload: LotCreate, db: AsyncSession = Depends(get_db)):
+async def create_lot(
+    payload: LotCreate,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(require_api_key),
+):
     lot = Lot(**payload.model_dump())
     db.add(lot)
     await db.commit()
     await db.refresh(lot)
     return lot
-
-
-async def _update_expired_lots(db: AsyncSession):
-    cutoff = date.today() - timedelta(days=EXPIRY_DAYS)
-    await db.execute(
-        update(Lot)
-        .where(Lot.storage_date <= cutoff, Lot.status != "EN_ALERTE")
-        .values(status="PERIME")
-    )
-    await db.commit()

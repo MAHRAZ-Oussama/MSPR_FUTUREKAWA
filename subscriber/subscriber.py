@@ -14,10 +14,12 @@ import aiosmtplib
 from email.mime.text import MIMEText
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, Text, DateTime
+from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, Text, Date, DateTime
+from sqlalchemy.orm import DeclarativeBase
+
+from severity import compute_severity, is_plausible, should_clear
 
 TIMESTAMPTZ = DateTime(timezone=True)
-from sqlalchemy.orm import DeclarativeBase
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -53,7 +55,7 @@ class Lot(Base):
     __tablename__ = "lots"
     id           = Column(String(50), primary_key=True)
     warehouse_id = Column(Integer)
-    storage_date = Column(DECIMAL)  # used only for querying lots in alert
+    storage_date = Column(Date)
     status       = Column(String(20))
 
 
@@ -81,15 +83,6 @@ class Alert(Base):
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
-# ── Calcul de sévérité ───────────────────────────────────────────────────────
-def compute_severity(deviation: float, tolerance: float) -> str | None:
-    if deviation <= tolerance:
-        return None
-    if deviation <= 1.5 * tolerance:
-        return "WARNING"
-    return "CRITICAL"
 
 
 # ── Déduplication anti-flood ─────────────────────────────────────────────────
@@ -124,11 +117,28 @@ async def send_alert_email(to: str, subject: str, body: str, alert_id: int, db: 
 
 
 # ── Traitement d'une mesure ──────────────────────────────────────────────────
+async def resolve_active_alerts(db: AsyncSession, warehouse_id: int, alert_type: str) -> int:
+    """Auto-résout (hystérésis) les alertes conditions actives d'un type donné."""
+    result = await db.execute(
+        update(Alert)
+        .where(
+            Alert.warehouse_id == warehouse_id,
+            Alert.alert_type == alert_type,
+            Alert.resolved_at.is_(None),
+        )
+        .values(resolved_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
 async def process_measurement(warehouse_code: str, payload: dict):
     temp = payload.get("temperature_c")
     hum  = payload.get("humidity_pct")
-    if temp is None or hum is None:
-        log.warning("Payload incomplet : %s", payload)
+    # A3 : rejet des lectures capteur aberrantes (DHT22 défaillant) — on ne
+    # persiste ni n'alerte sur une valeur physiquement impossible.
+    if not is_plausible(temp, hum):
+        log.warning("Mesure rejetée (hors plage physique ou incomplète) : %s", payload)
         return
 
     async with SessionLocal() as db:
@@ -165,6 +175,13 @@ async def process_measurement(warehouse_code: str, payload: dict):
         for alert_type, deviation, tolerance, msg_text in checks:
             severity = compute_severity(deviation, tolerance)
             if not severity:
+                # A1 : la mesure est dans la plage — auto-résolution si elle est
+                # franchement revenue à la normale (hystérésis anti-flapping).
+                if should_clear(deviation, tolerance):
+                    n = await resolve_active_alerts(db, wh.id, alert_type)
+                    if n:
+                        log.info("[RESOLU] %s — %s (%d alerte(s) clôturée(s))",
+                                 alert_type, warehouse_code, n)
                 continue
             if await is_duplicate(db, wh.id, alert_type):
                 log.debug("Anti-flood : alerte %s déjà active pour %s", alert_type, warehouse_code)
